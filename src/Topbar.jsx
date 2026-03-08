@@ -7,6 +7,10 @@ export default function Topbar({ onToggleSidebar, onOpenSettings }) {
     month: 'long',
     year: 'numeric',
   })
+  {/* Centre : date — masquée sur mobile */}
+  <div className="absolute left-1/2 -translate-x-1/2 hidden sm:block">
+    <span className="text-white/70 text-sm font-medium">{dateStr}</span>
+  </div>
 
   // Capitalise le premier caractère
   const dateStr = today.charAt(0).toUpperCase() + today.slice(1)

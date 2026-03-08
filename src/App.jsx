@@ -11,7 +11,6 @@ import Favoris from './Favoris'
 import Calendar from './Calendar'
 import PageHistorique from './PageHistorique'
 import PanneauStats from './PanneauStats'
-import { COULEURS_NAGES, COULEURS_MAT, COULEURS_INT, COULEURS_TYPE } from './constants'
 
 function statsLigne(ligne) {
   if (!ligne) return null
@@ -22,9 +21,23 @@ function statsLigne(ligne) {
   }
 }
 
+// Hook pour détecter la taille d'écran
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [])
+  return isMobile
+}
+
 export default function App() {
+  const isMobile = useIsMobile()
+
   const [onglet, setOnglet]               = useState('saisie')
-  const [sidebarOpen, setSidebarOpen]     = useState(true)
+  // Sur mobile : sidebar fermée par défaut
+  const [sidebarOpen, setSidebarOpen]     = useState(() => window.innerWidth >= 768)
   const [texte, setTexte]                 = useState('')
   const [titre, setTitre]                 = useState('')
   const [dateSeance, setDateSeance]       = useState(() => new Date().toISOString().slice(0, 16))
@@ -42,7 +55,6 @@ export default function App() {
   })
   const editorRef = useRef(null)
 
-  // ── parseSeance avec tempsDefaut ────────────────────────────
   const resultat = texte.trim()
     ? parseSeance(texte, { nages, materiel, intensite, typeExo }, tempsDefaut)
     : null
@@ -53,7 +65,17 @@ export default function App() {
     ? { totalDistance: resultat.totalDistance, totalTemps: resultat.totalTemps }
     : null
 
-  // ── Persistence localStorage ─────────────────────────────────
+  // Fermer sidebar auto sur mobile quand on change d'onglet
+  const handleNavigate = (page) => {
+    setOnglet(page)
+    if (isMobile) setSidebarOpen(false)
+  }
+
+  // Fermer sidebar sur mobile quand on clique toggle
+  const handleToggleSidebar = () => {
+    setSidebarOpen(o => !o)
+  }
+
   useEffect(() => { localStorage.setItem('historique',        JSON.stringify(historique))  }, [historique])
   useEffect(() => { localStorage.setItem('favoris',           JSON.stringify(favoris))     }, [favoris])
   useEffect(() => { localStorage.setItem('nages',             JSON.stringify(nages))       }, [nages])
@@ -62,63 +84,38 @@ export default function App() {
   useEffect(() => { localStorage.setItem('typeExo',           JSON.stringify(typeExo))     }, [typeExo])
   useEffect(() => { localStorage.setItem('swim_tempsDefaut',  JSON.stringify(tempsDefaut)) }, [tempsDefaut])
 
-  // ── Curseur ──────────────────────────────────────────────────
   const handleCursorMove = useCallback(() => {
-  if (!editorRef.current) return
-  const sel = window.getSelection()
-  if (!sel || sel.rangeCount === 0) return
-
-  const range = sel.getRangeAt(0).cloneRange()
-  range.setStart(editorRef.current, 0)
-  const offsetTotal = range.toString().length
-
-  const texteActuel = editorRef.current.innerText
-  const lignes = texteActuel.split('\n')
-
-  // 1. Trouver le numéro de ligne brute du curseur
-  let cumul = 0
-  let numeroLigneBrute = 0
-  for (let i = 0; i < lignes.length; i++) {
-    const longueur = lignes[i].length
-    if (offsetTotal <= cumul + longueur) {
+    if (!editorRef.current) return
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return
+    const range = sel.getRangeAt(0).cloneRange()
+    range.setStart(editorRef.current, 0)
+    const offsetTotal = range.toString().length
+    const texteActuel = editorRef.current.innerText
+    const lignes = texteActuel.split('\n')
+    let cumul = 0
+    let numeroLigneBrute = 0
+    for (let i = 0; i < lignes.length; i++) {
+      const longueur = lignes[i].length
+      if (offsetTotal <= cumul + longueur) { numeroLigneBrute = i; break }
+      cumul += longueur + 1
       numeroLigneBrute = i
-      break
     }
-    cumul += longueur + 1
-    numeroLigneBrute = i
-  }
+    const ligneBrute = lignes[numeroLigneBrute]
+    if (!ligneBrute || ligneBrute.trim() === '') { setLigneCurseur(null); return }
+    if (!resultat?.lignesParsees) { setLigneCurseur(null); return }
+    const texteNormalise = ligneBrute.trim().toLowerCase()
+    const idx = resultat.lignesParsees.findIndex(l => {
+      const orig = (l.texteOriginal || '').trim().toLowerCase()
+      return orig === texteNormalise || orig.startsWith(texteNormalise) || texteNormalise.startsWith(orig)
+    })
+    setLigneCurseur(idx >= 0 ? idx : null)
+  }, [resultat])
 
-  const ligneBrute = lignes[numeroLigneBrute]
-  if (!ligneBrute || ligneBrute.trim() === '') {
-    setLigneCurseur(null)
-    return
-  }
-
-  // 2. Chercher dans lignesParsees celle dont le texteOriginal
-  //    correspond à la ligne brute courante
-  if (!resultat?.lignesParsees) {
-    setLigneCurseur(null)
-    return
-  }
-
-  const texteNormalise = ligneBrute.trim().toLowerCase()
-
-  const idx = resultat.lignesParsees.findIndex(l => {
-    const orig = (l.texteOriginal || '').trim().toLowerCase()
-    return orig === texteNormalise || orig.startsWith(texteNormalise) || texteNormalise.startsWith(orig)
-  })
-
-  setLigneCurseur(idx >= 0 ? idx : null)
-}, [resultat])
-
-
-  // ── Actions séance ───────────────────────────────────────────
   const resetSaisie = () => {
-    setTexte('')
-    setTitre('')
+    setTexte(''); setTitre('')
     setDateSeance(new Date().toISOString().slice(0, 16))
-    setLigneCurseur(null)
-    setSeanceEnEdition(null)
+    setLigneCurseur(null); setSeanceEnEdition(null)
     if (editorRef.current) editorRef.current.innerHTML = ''
   }
 
@@ -147,34 +144,25 @@ export default function App() {
   }
 
   const modifierSeance = (s) => {
-    setTexte(s.texte)
-    setTitre(s.titre || '')
+    setTexte(s.texte); setTitre(s.titre || '')
     setDateSeance(s.date ? new Date(s.date).toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16))
-    setSeanceEnEdition(s.id)
-    setOnglet('saisie')
+    setSeanceEnEdition(s.id); setOnglet('saisie')
     setTimeout(() => {
-      if (editorRef.current) {
-        editorRef.current.innerHTML = s.html || s.texte.replace(/\n/g, '<br/>')
-      }
+      if (editorRef.current) editorRef.current.innerHTML = s.html || s.texte.replace(/\n/g, '<br/>')
     }, 50)
   }
 
   const dupliquerSeance = (s) => {
-    setTexte(s.texte)
-    setTitre((s.titre || '') + ' (copie)')
+    setTexte(s.texte); setTitre((s.titre || '') + ' (copie)')
     setDateSeance(new Date().toISOString().slice(0, 16))
-    setSeanceEnEdition(null)
-    setOnglet('saisie')
+    setSeanceEnEdition(null); setOnglet('saisie')
     setTimeout(() => {
-      if (editorRef.current) {
-        editorRef.current.innerHTML = s.html || s.texte.replace(/\n/g, '<br/>')
-      }
+      if (editorRef.current) editorRef.current.innerHTML = s.html || s.texte.replace(/\n/g, '<br/>')
     }, 50)
   }
 
   const supprimerSeance = (id) => setHistorique(prev => prev.filter(s => s.id !== id))
 
-  // ── Favoris ──────────────────────────────────────────────────
   const ajouterFavoriSeance = () => {
     if (!resultat || resultat.totalDistance === 0) return
     setFavoris(prev => [{
@@ -199,38 +187,38 @@ export default function App() {
   const sauvegarderFavori = (favori) => setFavoris(prev => prev.map(f => f.id === favori.id ? favori : f))
 
   const chargerFavoriSeance = (fav) => {
-    setTexte(fav.texte)
-    setTitre(fav.titre || '')
+    setTexte(fav.texte); setTitre(fav.titre || '')
     setDateSeance(new Date().toISOString().slice(0, 16))
-    setSeanceEnEdition(null)
-    setOnglet('saisie')
+    setSeanceEnEdition(null); setOnglet('saisie')
     setTimeout(() => {
-      if (editorRef.current) {
-        editorRef.current.innerHTML = fav.html || fav.texte.replace(/\n/g, '<br/>')
-      }
+      if (editorRef.current) editorRef.current.innerHTML = fav.html || fav.texte.replace(/\n/g, '<br/>')
     }, 50)
   }
 
   const handleEditorInput = useCallback(() => {
     if (!editorRef.current) return
-    const newTexte = editorRef.current.innerText
-    setTexte(newTexte)
+    setTexte(editorRef.current.innerText)
     handleCursorMove()
   }, [handleCursorMove])
 
-  const handleSaveTempsDefaut = (val) => {
-    setTempsDefaut(val)
-  }
+  const handleSaveTempsDefaut = (val) => setTempsDefaut(val)
 
-  // ── Render ───────────────────────────────────────────────────
+  // ── Calcul du margin-left du main ────────────────────────────
+  // Sur mobile : pas de margin (sidebar en overlay)
+  // Sur desktop : margin selon sidebar ouverte ou non
+  const mainMarginLeft = isMobile
+    ? '0px'
+    : sidebarOpen ? '240px' : '64px'
+
   const renderPage = () => {
     switch (onglet) {
 
       case 'saisie': return (
-        <div className="flex gap-4 items-start w-full">
+        // MOBILE : flex-col (empilé) | DESKTOP : flex-row (côte à côte)
+        <div className="flex flex-col lg:flex-row gap-4 items-start w-full">
 
-          {/* Colonne gauche 55% */}
-          <div className="flex flex-col gap-4" style={{ flex: '55 1 0%', minWidth: 0 }}>
+          {/* Colonne principale — 100% mobile, 55% desktop */}
+          <div className="flex flex-col gap-4 w-full lg:flex-[55]">
 
             {seanceEnEdition && (
               <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
@@ -242,10 +230,11 @@ export default function App() {
               </div>
             )}
 
-            <div className="flex gap-3 items-center">
+            {/* Titre + Date : colonne sur mobile, ligne sur desktop */}
+            <div className="flex flex-col sm:flex-row gap-3">
               <input
                 type="text"
-                placeholder="Titre de la séance (ex: Endurance matinale)"
+                placeholder="Titre de la séance"
                 value={titre}
                 onChange={e => setTitre(e.target.value)}
                 className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-medium shadow-sm outline-none focus:border-[#1d83ea] focus:ring-2 focus:ring-blue-100"
@@ -254,7 +243,7 @@ export default function App() {
                 type="datetime-local"
                 value={dateSeance}
                 onChange={e => setDateSeance(e.target.value)}
-                className="border border-gray-200 rounded-xl px-4 py-2.5 text-sm shadow-sm outline-none focus:border-[#1d83ea] focus:ring-2 focus:ring-blue-100"
+                className="w-full sm:w-auto border border-gray-200 rounded-xl px-4 py-2.5 text-sm shadow-sm outline-none focus:border-[#1d83ea] focus:ring-2 focus:ring-blue-100"
               />
             </div>
 
@@ -269,7 +258,7 @@ export default function App() {
                 onClick={handleCursorMove}
                 onKeyUp={handleCursorMove}
                 data-placeholder={"Echauffement:\n    400 nl a1\n    4x50 4n a1\n\nCorps:\n    8x100 nl a2 @1:30\n\nRécup:\n    200 nl souple"}
-                className="w-full p-4 font-mono text-sm outline-none leading-relaxed min-h-[320px]"
+                className="w-full p-4 font-mono text-sm outline-none leading-relaxed min-h-[260px] md:min-h-[320px]"
               />
               <BandeauLigneActive ligne={ligneActive} />
             </div>
@@ -278,25 +267,22 @@ export default function App() {
               <div className="flex gap-3">
                 <button
                   onClick={sauvegarderSeance}
-                  className="flex-1 bg-[#1d83ea] hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition shadow"
+                  className="flex-1 bg-[#1d83ea] hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition shadow text-sm"
                 >
-                  {seanceEnEdition ? '✏️ Mettre à jour la séance' : '💾 Sauvegarder la séance'}
+                  {seanceEnEdition ? '✏️ Mettre à jour' : '💾 Sauvegarder'}
                 </button>
                 {!seanceEnEdition && (
                   <button
                     onClick={ajouterFavoriSeance}
-                    className="bg-yellow-50 hover:bg-yellow-100 border border-yellow-300 text-yellow-600 font-semibold py-3 px-5 rounded-xl transition"
+                    className="bg-yellow-50 hover:bg-yellow-100 border border-yellow-300 text-yellow-600 font-semibold py-3 px-5 rounded-xl transition text-sm"
                   >⭐ Favori</button>
                 )}
               </div>
             )}
           </div>
 
-          {/* Colonne droite 45% */}
-          <div
-            className="flex flex-col gap-3 self-start sticky top-20"
-            style={{ flex: '45 1 0%', minWidth: 0, marginTop: '58px' }}
-          >
+          {/* Colonne stats — 100% mobile (en bas), 45% desktop (sticky) */}
+          <div className="w-full lg:flex-[45] lg:self-start lg:sticky lg:top-20">
             {resultat ? (
               <PanneauStats
                 data={statsGlobales}
@@ -308,7 +294,7 @@ export default function App() {
             ) : (
               <div className="bg-white border border-dashed border-gray-200 rounded-xl px-4 py-8 text-center">
                 <div className="text-3xl mb-2">🏊</div>
-                <div className="text-sm text-gray-300">Les stats de séance apparaîtront ici</div>
+                <div className="text-sm text-gray-300">Les stats apparaîtront ici</div>
               </div>
             )}
           </div>
@@ -318,16 +304,11 @@ export default function App() {
       case 'calendrier': return (
         <Calendar
           historique={historique}
-          nages={nages}
-          materiel={materiel}
-          intensite={intensite}
-          typeExo={typeExo}
+          nages={nages} materiel={materiel}
+          intensite={intensite} typeExo={typeExo}
           onSauvegarder={(payload, estModification) => {
-            if (estModification) {
-              setHistorique(prev => prev.map(s => s.id === payload.id ? payload : s))
-            } else {
-              setHistorique(prev => [payload, ...prev])
-            }
+            if (estModification) setHistorique(prev => prev.map(s => s.id === payload.id ? payload : s))
+            else setHistorique(prev => [payload, ...prev])
           }}
           onSupprimer={supprimerSeance}
         />
@@ -355,10 +336,8 @@ export default function App() {
 
       case 'parametres': return (
         <Settings
-          nages={nages}
-          materiel={materiel}
-          intensite={intensite}
-          typeExo={typeExo}
+          nages={nages} materiel={materiel}
+          intensite={intensite} typeExo={typeExo}
           tempsDefaut={tempsDefaut}
           onSaveTempsDefaut={handleSaveTempsDefaut}
           onUpdate={(category, items) => {
@@ -376,25 +355,32 @@ export default function App() {
     }
   }
 
+  // ✅ handleCloseSidebar AVANT le return, pas dedans
+  const handleCloseSidebar = () => setSidebarOpen(false)
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Topbar
-        onToggleSidebar={() => setSidebarOpen(o => !o)}
-        onOpenSettings={() => setOnglet('parametres')}
+        onToggleSidebar={handleToggleSidebar}
+        onOpenSettings={() => handleNavigate('parametres')}
       />
+
       <Sidebar
         isOpen={sidebarOpen}
         activePage={onglet}
-        onNavigate={setOnglet}
+        onNavigate={handleNavigate}
+        onClose={handleCloseSidebar}
       />
+
       <main
         className="pt-14 transition-all duration-300"
-        style={{ marginLeft: sidebarOpen ? '240px' : '64px' }}
+        style={{ marginLeft: mainMarginLeft }}
       >
-        <div className="p-6">
+        <div className="p-3 md:p-6">
           {renderPage()}
         </div>
       </main>
     </div>
   )
-}
+}  // ← accolade fermante de export default function App()
+
